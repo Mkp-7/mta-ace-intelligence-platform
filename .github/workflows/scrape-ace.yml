@@ -1,0 +1,41 @@
+name: Scrape ACE Data
+
+on:
+  push:
+    paths:
+      - 'config.py'
+      - 'module5_ace_impact/01_extract_ace_data.py'
+  schedule:
+    - cron: '0 7 * * 1'   # weekly, offset an hour from the review scraper
+  workflow_dispatch:
+
+jobs:
+  scrape-ace:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ACE data extractor
+        env:
+          SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+        run: python module5_ace_impact/01_extract_ace_data.py
+
+      - name: Commit data back to repo
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/ace_routes.csv data/ace_violations.csv data/bus_speeds.csv
+          git diff --staged --quiet || git commit -m "Auto-update ACE impact data [skip ci]"
+          git push
