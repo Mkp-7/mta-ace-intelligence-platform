@@ -27,6 +27,16 @@ Run with: python module5_ace_impact/01_extract_ace_data.py
 import os, sys, csv, json, time
 import urllib.request, urllib.parse, urllib.error
 
+# CRITICAL: when stdout isn't a terminal (e.g. GitHub Actions captures it as a
+# pipe), Python fully buffers print() output instead of flushing per line - so
+# nothing appears in the live log until the buffer fills or the script exits.
+# For a long-running scraper that's the difference between "looks hung" and
+# "visibly working." Force line buffering so progress shows up immediately.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except AttributeError:
+    pass  # older Python without reconfigure(); PYTHONUNBUFFERED env var covers it instead
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import (
     SOCRATA_DOMAIN, SOCRATA_APP_TOKEN as CONFIG_SOCRATA_APP_TOKEN,
@@ -75,6 +85,7 @@ def fetch_all(dataset_id, label, max_pages=200, order=None):
     all_rows = []
     offset = 0
     for page in range(max_pages):
+        page_start = time.time()
         try:
             rows = fetch_page(dataset_id, PAGE_SIZE, offset, order=order)
         except urllib.error.HTTPError as e:
@@ -84,14 +95,18 @@ def fetch_all(dataset_id, label, max_pages=200, order=None):
             print(f"   Error fetching {label} at offset {offset}: {e}")
             break
 
+        elapsed = time.time() - page_start
         if not rows:
             break
         all_rows.extend(rows)
-        print(f"   {label}: fetched {len(all_rows):,} rows so far...")
+        print(f"   {label}: fetched {len(all_rows):,} rows so far... (page {page+1} took {elapsed:.1f}s)")
         if len(rows) < PAGE_SIZE:
             break
         offset += PAGE_SIZE
         time.sleep(0.2)
+
+    if len(all_rows) >= PAGE_SIZE * max_pages:
+        print(f"   ⚠️  Hit max_pages cap ({max_pages}) for {label} - there may be more data than this.")
 
     return all_rows
 
@@ -181,7 +196,11 @@ def extract_ace_routes():
 
 def extract_ace_violations():
     print("\n📸 Fetching ACE Violations...")
-    rows = fetch_all(ACE_VIOLATIONS_DATASET_ID, "ACE violations")
+    print("   Note: this dataset has been growing since 2019 and may have 500k+ rows.")
+    print("   Capping at 150,000 rows (30 pages) for a reasonable run time - the impact")
+    print("   engine only needs violations near each route's activation date, not the")
+    print("   full history. Raise max_pages below once you've confirmed this works.")
+    rows = fetch_all(ACE_VIOLATIONS_DATASET_ID, "ACE violations", max_pages=30)
     field_spec = {
         "route":  (["bus_route_id", "route_id", "route"], []),
         "date":   (["first_occurrence", "violation_date", "issue_date", "date"], []),
