@@ -1,25 +1,31 @@
 """
 ACE Impact Data Extractor
-Pulls three real public datasets from data.ny.gov (NYS Open Data / Socrata):
+Pulls real public datasets from data.ny.gov (NYS Open Data / Socrata):
 
   1. MTA Bus Automated Camera Enforced Routes  (ki2b-sg5y)
      -> which routes have ACE, and since when (the "activation date" / treatment point)
+     -> CONFIRMED columns: route, program, implementation_date
   2. MTA Bus Automated Camera Enforcement Violations (kh8p-hcbm)
      -> every recorded violation, dated and route-tagged
-  3. MTA Bus Speeds: Beginning 2020 (6ksi-7cxr)
-     -> route-level monthly average speed - the outcome metric for before/after testing
+     -> CONFIRMED columns: violation_id, vehicle_id, first_occurrence, last_occurrence,
+        violation_status, violation_type, bus_route_id, violation_latitude/longitude,
+        stop_id, stop_name, bus_stop_latitude/longitude, *_georeference
+  3. MTA Bus Speeds (route-level monthly average speed - the outcome metric)
+     -> split/re-published across multiple dataset IDs by year; NYS Open Data
+        periodically retires old IDs (e.g. the original "Beginning 2020" ID,
+        6ksi-7cxr, 404s as of this build). BUS_SPEEDS_DATASET_IDS in config.py
+        is tried in order and 404s are skipped gracefully rather than failing
+        the whole run - append new IDs there as datasets get re-versioned again.
 
-WHY COLUMN AUTO-DETECTION:
+WHY COLUMN AUTO-DETECTION (still used for the speeds dataset):
 This was built without live network access to data.ny.gov, and the dataset
-pages are JS-rendered (the schema isn't visible in static HTML either), so the
-exact column names in the live API response could not be verified ahead of
-time. Rather than hardcode guessed names with false confidence, this script:
-  - fetches a small sample from each dataset first
-  - prints every column name it actually finds
-  - auto-picks the most likely column for each field using keyword matching
-  - lets you hardcode the verified name in COLUMN_OVERRIDES below if detection
-    ever picks the wrong one (check the printed "Detected columns" lines after
-    your first real run and adjust if anything looks off)
+pages are JS-rendered (the schema isn't visible in static HTML either), so
+exact column names had to be confirmed by an actual run instead of guessed
+ahead of time. Datasets 1 and 2's columns are now confirmed and hardcoded
+above in COLUMN_OVERRIDES. Dataset 3 is still on auto-detect since its
+dataset IDs changed after the original build and haven't been run live yet -
+check the printed "actual columns returned by API" output and hardcode into
+COLUMN_OVERRIDES["speeds"] once confirmed.
 
 Run with: python module5_ace_impact/01_extract_ace_data.py
 """
@@ -40,7 +46,7 @@ except AttributeError:
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import (
     SOCRATA_DOMAIN, SOCRATA_APP_TOKEN as CONFIG_SOCRATA_APP_TOKEN,
-    ACE_ROUTES_DATASET_ID, ACE_VIOLATIONS_DATASET_ID, BUS_SPEEDS_DATASET_ID,
+    ACE_ROUTES_DATASET_ID, ACE_VIOLATIONS_DATASET_ID, BUS_SPEEDS_DATASET_IDS,
     ACE_ROUTES_CSV, ACE_VIOLATIONS_CSV, BUS_SPEEDS_CSV, DATA_DIR,
 )
 
@@ -54,9 +60,14 @@ SOCRATA_APP_TOKEN = os.environ.get("SOCRATA_APP_TOKEN", CONFIG_SOCRATA_APP_TOKEN
 # If auto-detection picks the wrong column for a dataset, hardcode the real
 # name here (verified from the printed "Detected columns" output) and it will
 # be used instead of the keyword-matched guess. Leave as None to keep auto-detect.
+#
+# routes/violations below are CONFIRMED from a real run against the live API
+# (see conversation history) - hardcoded directly rather than left to guess.
+# speeds is still auto-detect since BUS_SPEEDS_DATASET_IDS changed and hasn't
+# been run against live data yet.
 COLUMN_OVERRIDES = {
-    "routes":     {"route": None, "date": None, "borough": None},
-    "violations": {"route": None, "date": None, "status": None, "type": None},
+    "routes":     {"route": "route", "date": "implementation_date", "borough": None},  # no borough column exists - that's fine, it's optional
+    "violations": {"route": "bus_route_id", "date": "first_occurrence", "status": "violation_status", "type": "violation_type"},
     "speeds":     {"route": None, "period": None, "speed": None},
 }
 
@@ -81,7 +92,10 @@ def fetch_page(dataset_id, limit, offset, order=None):
 
 
 def fetch_all(dataset_id, label, max_pages=200, order=None):
-    """Paginate through a Socrata dataset until a short page signals the end."""
+    """Paginate through a Socrata dataset until a short page signals the end.
+    Returns (rows, dead) where dead=True means the FIRST request 404'd (the
+    dataset ID itself is gone/retired), distinct from "dataset exists but is
+    legitimately empty"."""
     all_rows = []
     offset = 0
     for page in range(max_pages):
@@ -89,6 +103,9 @@ def fetch_all(dataset_id, label, max_pages=200, order=None):
         try:
             rows = fetch_page(dataset_id, PAGE_SIZE, offset, order=order)
         except urllib.error.HTTPError as e:
+            if page == 0:
+                print(f"   ✗ {label} ({dataset_id}): {e.code} {e.reason} - this dataset ID looks retired/invalid, skipping.")
+                return [], True
             print(f"   HTTP error on {label} at offset {offset}: {e.code} {e.reason}")
             break
         except Exception as e:
@@ -108,7 +125,23 @@ def fetch_all(dataset_id, label, max_pages=200, order=None):
     if len(all_rows) >= PAGE_SIZE * max_pages:
         print(f"   ⚠️  Hit max_pages cap ({max_pages}) for {label} - there may be more data than this.")
 
-    return all_rows
+    return all_rows, False
+
+
+def fetch_all_multi(dataset_ids, label, max_pages_per_id=15, order=None):
+    """
+    Try multiple dataset IDs (e.g. the same logical dataset split/re-published
+    across years) and merge whatever succeeds. IDs that 404 are logged and
+    skipped rather than treated as fatal - NYS Open Data periodically retires
+    and re-IDs datasets, and this should keep working when that happens again.
+    """
+    combined = []
+    for dataset_id in dataset_ids:
+        rows, dead = fetch_all(dataset_id, f"{label} ({dataset_id})", max_pages=max_pages_per_id, order=order)
+        if dead:
+            continue
+        combined.extend(rows)
+    return combined
 
 
 def find_column(columns, keywords, exclude=()):
@@ -129,9 +162,10 @@ def find_column(columns, keywords, exclude=()):
 
 def detect_columns(rows, dataset_label, field_spec, overrides):
     """
-    field_spec: dict of {field_name: (keywords_list, exclude_list)}
+    field_spec: dict of {field_name: (keywords_list, exclude_list, required_bool)}
     overrides: dict of {field_name: forced_column_name_or_None}
     Returns dict of {field_name: detected_column_name}, printing what it found.
+    Fields marked required=False that aren't found are noted but don't fail the run.
     """
     if not rows:
         print(f"   ⚠️  No rows returned for {dataset_label} - cannot detect columns.")
@@ -142,7 +176,7 @@ def detect_columns(rows, dataset_label, field_spec, overrides):
     print(f"      {columns}")
 
     detected = {}
-    for field, (keywords, exclude) in field_spec.items():
+    for field, (keywords, exclude, required) in field_spec.items():
         forced = overrides.get(field)
         if forced:
             detected[field] = forced
@@ -150,10 +184,24 @@ def detect_columns(rows, dataset_label, field_spec, overrides):
         else:
             found = find_column(columns, keywords, exclude)
             detected[field] = found
-            status = f"'{found}'" if found else "NOT FOUND - check COLUMN_OVERRIDES"
+            if found:
+                status = f"'{found}'"
+            elif required:
+                status = "NOT FOUND - check COLUMN_OVERRIDES (required)"
+            else:
+                status = "not found (optional, unused downstream - fine to ignore)"
             print(f"      [{field}] auto-detected: {status}")
 
     return detected
+
+
+def missing_required(field_spec, detected):
+    """True if any REQUIRED field failed to detect. Optional fields don't count."""
+    return any(
+        detected.get(field) is None
+        for field, (_, _, required) in field_spec.items()
+        if required
+    )
 
 
 def save_csv(rows, columns_used, path):
@@ -179,15 +227,15 @@ def save_csv(rows, columns_used, path):
 
 def extract_ace_routes():
     print("\n🚌 Fetching ACE Enforced Routes...")
-    rows = fetch_all(ACE_ROUTES_DATASET_ID, "ACE routes")
+    rows, dead = fetch_all(ACE_ROUTES_DATASET_ID, "ACE routes")
     field_spec = {
-        "route":   (["route_id", "bus_route", "route"], []),
-        "date":    (["activation", "implementation", "effective_date", "start_date", "ace_date", "date"], []),
-        "borough": (["borough"], []),
+        "route":   (["route_id", "bus_route", "route"], [], True),
+        "date":    (["activation", "implementation", "effective_date", "start_date", "ace_date", "date"], [], True),
+        "borough": (["borough"], [], False),   # not used downstream - fine if missing
     }
     cols = detect_columns(rows, "ACE Enforced Routes", field_spec, COLUMN_OVERRIDES["routes"])
     save_csv(rows, cols, ACE_ROUTES_CSV)
-    return rows, cols
+    return rows, cols, field_spec
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -200,16 +248,16 @@ def extract_ace_violations():
     print("   Capping at 150,000 rows (30 pages) for a reasonable run time - the impact")
     print("   engine only needs violations near each route's activation date, not the")
     print("   full history. Raise max_pages below once you've confirmed this works.")
-    rows = fetch_all(ACE_VIOLATIONS_DATASET_ID, "ACE violations", max_pages=30)
+    rows, dead = fetch_all(ACE_VIOLATIONS_DATASET_ID, "ACE violations", max_pages=30)
     field_spec = {
-        "route":  (["bus_route_id", "route_id", "route"], []),
-        "date":   (["first_occurrence", "violation_date", "issue_date", "date"], []),
-        "status": (["violation_status", "status"], []),
-        "type":   (["violation_type", "type"], []),
+        "route":  (["bus_route_id", "route_id", "route"], [], True),
+        "date":   (["first_occurrence", "violation_date", "issue_date", "date"], [], True),
+        "status": (["violation_status", "status"], [], False),
+        "type":   (["violation_type", "type"], [], False),
     }
     cols = detect_columns(rows, "ACE Violations", field_spec, COLUMN_OVERRIDES["violations"])
     save_csv(rows, cols, ACE_VIOLATIONS_CSV)
-    return rows, cols
+    return rows, cols, field_spec
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -217,16 +265,18 @@ def extract_ace_violations():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def extract_bus_speeds():
-    print("\n🚍 Fetching MTA Bus Speeds (Beginning 2020)...")
-    rows = fetch_all(BUS_SPEEDS_DATASET_ID, "bus speeds")
+    print(f"\n🚍 Fetching MTA Bus Speeds across {len(BUS_SPEEDS_DATASET_IDS)} dataset ID(s)...")
+    print("   This dataset is split/re-published by year and old IDs get retired -")
+    print("   trying each known ID and merging whatever's still live.")
+    rows = fetch_all_multi(BUS_SPEEDS_DATASET_IDS, "bus speeds", max_pages_per_id=15)
     field_spec = {
-        "route":  (["route_id", "bus_route", "route"], []),
-        "period": (["month", "period", "date"], []),
-        "speed":  (["average_speed", "speed_mph", "speed"], []),
+        "route":  (["route_id", "bus_route", "route"], [], True),
+        "period": (["month", "period", "date"], [], True),
+        "speed":  (["average_speed", "speed_mph", "speed"], [], True),
     }
     cols = detect_columns(rows, "Bus Speeds", field_spec, COLUMN_OVERRIDES["speeds"])
     save_csv(rows, cols, BUS_SPEEDS_CSV)
-    return rows, cols
+    return rows, cols, field_spec
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -239,9 +289,9 @@ def main():
     print("  Pulling real public datasets from data.ny.gov")
     print("=" * 60)
 
-    routes_rows, routes_cols = extract_ace_routes()
-    viol_rows, viol_cols     = extract_ace_violations()
-    speed_rows, speed_cols   = extract_bus_speeds()
+    routes_rows, routes_cols, routes_spec = extract_ace_routes()
+    viol_rows, viol_cols, viol_spec       = extract_ace_violations()
+    speed_rows, speed_cols, speed_spec    = extract_bus_speeds()
 
     print("\n" + "=" * 60)
     print("  ✅ Done")
@@ -250,12 +300,21 @@ def main():
     print(f"     Bus speeds:     {len(speed_rows):,} rows  → {BUS_SPEEDS_CSV}")
     print("=" * 60)
 
-    any_missing = any(v is None for cols in (routes_cols, viol_cols, speed_cols) for v in cols.values())
-    if any_missing:
-        print("\n⚠️  Some columns could not be auto-detected (see 'NOT FOUND' above).")
+    fatal = (
+        missing_required(routes_spec, routes_cols)
+        or missing_required(viol_spec, viol_cols)
+        or missing_required(speed_spec, speed_cols)
+    )
+    if fatal:
+        print("\n⚠️  A REQUIRED column could not be auto-detected (see 'required' lines above).")
         print("   Open this file and set the real column name in COLUMN_OVERRIDES,")
         print("   then re-run. The 'actual columns returned by API' list printed")
         print("   above each dataset shows everything available to choose from.")
+        sys.exit(1)
+    elif not speed_rows:
+        print("\n⚠️  No bus speed data was retrieved from ANY dataset ID - check")
+        print("   BUS_SPEEDS_DATASET_IDS in config.py, the retired ones may all be")
+        print("   gone and a new current ID may be needed.")
         sys.exit(1)
 
 
