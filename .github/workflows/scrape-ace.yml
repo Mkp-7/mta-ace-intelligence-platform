@@ -12,6 +12,7 @@ on:
 jobs:
   scrape-ace:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
 
@@ -30,6 +31,7 @@ jobs:
       - name: Run ACE data extractor
         env:
           SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
+          PYTHONUNBUFFERED: "1"
         run: python module5_ace_impact/01_extract_ace_data.py
 
       - name: Commit data back to repo
