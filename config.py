@@ -56,7 +56,17 @@ SOCRATA_DOMAIN             = "data.ny.gov"
 SOCRATA_APP_TOKEN          = ""   # optional - set via env var for higher rate limits, not required
 ACE_ROUTES_DATASET_ID      = "ki2b-sg5y"   # MTA Bus Automated Camera Enforced Routes
 ACE_VIOLATIONS_DATASET_ID  = "kh8p-hcbm"   # MTA Bus Automated Camera Enforcement Violations
-BUS_SPEEDS_DATASET_ID      = "6ksi-7cxr"   # MTA Bus Speeds: Beginning 2020
+
+# Bus Speeds is split across multiple dataset IDs by year, and NYS Open Data
+# periodically retires/re-IDs old ones (6ksi-7cxr, the original "Beginning 2020"
+# ID, 404s as of this build - replaced by 4u4b-jge6 "Beginning 2025"). The
+# extractor tries each ID in order and skips any that 404 instead of failing,
+# so this list can be appended to over time without breaking anything.
+BUS_SPEEDS_DATASET_IDS     = [
+    "4u4b-jge6",   # MTA Bus Speeds: Beginning 2025 (currently active)
+    "6ksi-7cxr",   # MTA Bus Speeds: 2020-2024 (404 as of this build - kept in case it's restored)
+    "cudb-vcni",   # MTA Bus Speeds: 2015-2019 (older history, useful for early ACE routes)
+]
 
 ACE_ROUTES_CSV             = "data/ace_routes.csv"
 ACE_VIOLATIONS_CSV         = "data/ace_violations.csv"
