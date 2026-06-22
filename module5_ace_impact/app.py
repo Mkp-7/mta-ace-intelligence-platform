@@ -21,7 +21,10 @@ from config import (
     BRAND_NAME as APP_NAME, IMPACT_WINDOW_DAYS,
 )
 from module1_voice_of_customer.voc_analyzer import get_groq_client
-from module5_ace_impact.impact_engine import load_data, get_eligible_routes, compute_route_impact, write_impact_summary
+from module5_ace_impact.impact_engine import (
+    load_data, get_eligible_routes, compute_route_impact,
+    write_impact_summary, estimate_emissions_impact,
+)
 
 # These must match whatever 01_extract_ace_data.py actually detected at
 # extraction time. If you changed COLUMN_OVERRIDES there, mirror it here too.
@@ -172,6 +175,48 @@ def show():
         if trend is not None:
             vc3.metric("Change", f"{trend:+.1f}%", delta=f"{trend:+.1f}%", delta_color="inverse")
 
+    # ── Emissions estimate ──────────────────────────────────────────────────
+    emissions = estimate_emissions_impact(result)
+    if emissions:
+        st.markdown("---")
+        st.markdown("### 🌎 Estimated Emissions Impact")
+        st.caption(
+            "⚠️ Order-of-magnitude **estimate**, not a precision vehicle emissions model. "
+            "See methodology below."
+        )
+        ec1, ec2, ec3 = st.columns(3)
+        ec1.metric("Time saved", f"{emissions['time_saved_min_per_mile']} min/mile")
+        ec2.metric("Fuel saved (est.)", f"{emissions['fuel_saved_gal_per_mile']} gal/mile")
+        ec3.metric("CO2 avoided (est.)", f"{emissions['co2_avoided_kg_per_mile']} kg/mile")
+
+        with st.expander("Optional: scale to a daily/annual estimate"):
+            st.caption(
+                "These two numbers are NOT pulled from any dataset - enter real figures "
+                "for this route if you have them (e.g. from the route's published schedule) "
+                "to scale the per-mile rate up. Leave blank to skip scaling."
+            )
+            sc1, sc2 = st.columns(2)
+            daily_trips = sc1.number_input("Daily bus trips on this route", min_value=0, value=0, step=1)
+            route_miles_input = sc2.number_input("Route length (miles, one-way)", min_value=0.0, value=0.0, step=0.1)
+            if daily_trips and route_miles_input:
+                scaled = estimate_emissions_impact(result, daily_bus_trips=daily_trips, route_miles=route_miles_input)
+                st.metric("Estimated CO2 avoided / day", f"{scaled['co2_avoided_kg_per_day']:,} kg")
+                st.metric("Estimated CO2 avoided / year", f"{scaled['co2_avoided_kg_per_year']:,.0f} kg")
+                st.caption(f"Assumption used: {scaled['scale_assumption']}")
+
+        with st.expander("Methodology & sources"):
+            st.markdown(f"""
+{emissions['methodology']}
+
+**Sources:**
+- Transit bus idling fuel rate (~1.0 gal/hr): U.S. Dept. of Energy, *Fact #861: Idle Fuel
+  Consumption for Selected Gasoline and Diesel Vehicles* (Feb 2015), based on Argonne National
+  Laboratory data. [energy.gov/cmei/vehicles/fact-861](https://www.energy.gov/cmei/vehicles/fact-861-february-23-2015-idle-fuel-consumption-selected-gasoline-and-diesel-vehicles)
+- Diesel CO2 factor (10.18 kg/gal): EPA Greenhouse Gas Equivalencies Calculator, citing the
+  joint EPA/DOT Federal Register rulemaking (May 2010).
+  [epa.gov/energy/greenhouse-gas-equivalencies-calculator](https://www.epa.gov/energy/greenhouse-gas-equivalencies-calculator-calculations-and-references)
+""")
+
     st.markdown("---")
     st.markdown("### 📄 Draft Impact Statement")
     if st.button("Generate Press-Release-Style Summary", type="primary"):
@@ -181,11 +226,11 @@ def show():
             st.error(str(e))
         else:
             with st.spinner("Writing summary..."):
-                summary = write_impact_summary(result, client, brand_name=APP_NAME)
+                summary = write_impact_summary(result, client, brand_name=APP_NAME, emissions=emissions)
             st.markdown(
                 f"""<div style="background:#F1EFE8;border-radius:12px;padding:20px 24px;border:1px solid #D3D1C7;">
                     <div style="font-size:11px;font-weight:600;letter-spacing:0.08em;color:#888;text-transform:uppercase;margin-bottom:12px;">
-                        Impact Statement · AI Generated
+                        Impact Statement · AI Generated · Speeds and counts are real data; any emissions figure is a labeled estimate
                     </div>
                     <div style="font-size:15px;line-height:1.8;color:#2C2C2A;">{summary}</div>
                 </div>""",
@@ -194,8 +239,32 @@ def show():
             st.code(summary, language=None)
 
     st.markdown("---")
-    st.markdown("### 🏆 All Certified Routes (ranked by speed change)")
-    rows = []
+    st.markdown("## 🏆 Systemwide Ranking — All ACE Routes")
+    st.markdown(
+        "Computed for every route in the ACE Enforced Routes dataset that has speed data "
+        "on both sides of its activation date — not just the one selected above."
+    )
+
+    # ── Coverage accounting: which routes have ACE but couldn't be analyzed ──
+    all_ace_routes = sorted(routes_df.dropna(subset=[cols["route_date_col"]])[cols["route_col"]].unique().tolist())
+    excluded = [r for r in all_ace_routes if r not in eligible]
+
+    cov1, cov2, cov3 = st.columns(3)
+    cov1.metric("Total ACE routes", len(all_ace_routes))
+    cov2.metric("Analyzable (have before+after speed data)", len(eligible))
+    cov3.metric("Excluded (missing speed data)", len(excluded))
+
+    if excluded:
+        with st.expander(f"View {len(excluded)} routes excluded from ranking"):
+            st.caption(
+                "These routes have ACE cameras but don't yet have speed data on both sides "
+                "of their activation date in the Bus Speeds dataset(s) - usually because "
+                "activation was too recent, or the route isn't covered by the speed dataset."
+            )
+            st.write(", ".join(str(r) for r in excluded))
+
+    # ── Compute speed + emissions impact for every analyzable route ─────────
+    all_results = []
     for r in eligible:
         res = compute_route_impact(
             r, routes_df, viol_df, speed_df,
@@ -204,14 +273,77 @@ def show():
             cols["speed_route_col"], cols["speed_period_col"], cols["speed_col"],
             window_days=IMPACT_WINDOW_DAYS,
         )
-        if "pct_change" in res:
-            rows.append({
-                "Route": r, "Verdict": res["verdict"],
-                "Speed Before": res["speed_before"], "Speed After": res["speed_after"],
-                "% Change": res["pct_change"], "p-value": res.get("p_value"),
-            })
-    if rows:
-        table = pd.DataFrame(rows).sort_values("% Change", ascending=False)
-        st.dataframe(table, use_container_width=True, hide_index=True)
-    else:
+        if "pct_change" not in res:
+            continue
+        em = estimate_emissions_impact(res)
+        all_results.append({
+            "Route": r,
+            "Verdict": res["verdict"],
+            "Speed Before": res["speed_before"],
+            "Speed After": res["speed_after"],
+            "% Speed Change": res["pct_change"],
+            "p-value": res.get("p_value"),
+            "CO2 Avoided (kg/mile, est.)": em["co2_avoided_kg_per_mile"] if em else None,
+            "Time Saved (min/mile)": em["time_saved_min_per_mile"] if em else None,
+        })
+
+    if not all_results:
         st.info("No routes with enough data to rank yet.")
+    else:
+        full_table = pd.DataFrame(all_results)
+
+        by_speed = full_table.sort_values("% Speed Change", ascending=False)
+        by_emissions = full_table.sort_values("CO2 Avoided (kg/mile, est.)", ascending=False)
+
+        top5_speed_routes = set(by_speed.head(5)["Route"])
+        top5_emissions_routes = set(by_emissions.head(5)["Route"])
+        overlap = top5_speed_routes & top5_emissions_routes
+
+        st.markdown("---")
+        st.markdown(
+            f"**Top 5 by speed and top 5 by emissions overlap on {len(overlap)}/5 routes.** "
+            + (
+                "Same routes lead on both metrics - speed gains and emissions gains are tracking together here."
+                if len(overlap) >= 4 else
+                "The rankings diverge more than you might expect: emissions impact depends on the absolute "
+                "minutes saved per mile, not the percentage - so a slower, more congested route can rank higher "
+                "on emissions even with a smaller percentage speed gain, because the same % improvement recovers "
+                "more real idling time at low speeds than at high speeds."
+            )
+        )
+
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            st.markdown("#### 🚀 Top 5 — Speed Improvement")
+            st.dataframe(
+                by_speed.head(5)[["Route", "% Speed Change", "Speed Before", "Speed After", "Verdict"]],
+                use_container_width=True, hide_index=True,
+            )
+            st.markdown("#### 🐌 Bottom 5 — Speed Improvement")
+            st.dataframe(
+                by_speed.tail(5)[["Route", "% Speed Change", "Speed Before", "Speed After", "Verdict"]].iloc[::-1],
+                use_container_width=True, hide_index=True,
+            )
+        with rc2:
+            st.markdown("#### 🌎 Top 5 — Emissions Reduction (est.)")
+            st.dataframe(
+                by_emissions.head(5)[["Route", "CO2 Avoided (kg/mile, est.)", "Time Saved (min/mile)", "% Speed Change"]],
+                use_container_width=True, hide_index=True,
+            )
+            st.markdown("#### 🏭 Bottom 5 — Emissions Reduction (est.)")
+            st.dataframe(
+                by_emissions.tail(5)[["Route", "CO2 Avoided (kg/mile, est.)", "Time Saved (min/mile)", "% Speed Change"]].iloc[::-1],
+                use_container_width=True, hide_index=True,
+            )
+
+        st.markdown("---")
+        st.markdown("#### Full ranking — all analyzable routes")
+        sort_choice = st.radio("Sort by", ["% Speed Change", "CO2 Avoided (kg/mile, est.)"], horizontal=True)
+        st.dataframe(
+            full_table.sort_values(sort_choice, ascending=False),
+            use_container_width=True, hide_index=True,
+        )
+        st.caption(
+            "CO2 figures are order-of-magnitude estimates (see Methodology & sources above), "
+            "not certified measurements."
+        )
