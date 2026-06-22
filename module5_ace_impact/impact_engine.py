@@ -178,8 +178,92 @@ def compute_route_impact(route, routes_df, viol_df, speed_df,
     return result
 
 
-def write_impact_summary(result, client, brand_name="MTA"):
-    """LLM-written before/after impact statement in the style of an MTA press release."""
+# ══════════════════════════════════════════════════════════════════════════════
+# Emissions estimate - REAL, SOURCED, LABELED AS AN ESTIMATE
+#
+# This is NOT a full vehicle emissions model (that would require EPA's MOVES
+# tool with speed-specific emission rate curves for transit buses - out of
+# scope here). It's a transparent, order-of-magnitude proxy: the time
+# difference per mile between before/after average speed stands in for
+# reduced idling/low-speed-creeping time, then two real cited figures are
+# applied. Every number below traces to a real source - nothing is invented.
+#
+# SOURCES:
+#   - Transit bus idling fuel consumption ≈ 1.0 gal/hr
+#     U.S. Dept. of Energy, "Fact #861: Idle Fuel Consumption for Selected
+#     Gasoline and Diesel Vehicles" (Feb 23, 2015), based on Argonne National
+#     Laboratory data.
+#     https://www.energy.gov/cmei/vehicles/fact-861-february-23-2015-idle-fuel-consumption-selected-gasoline-and-diesel-vehicles
+#   - Diesel CO2 emission factor = 10.18 kg CO2/gallon (10,180 g/gal)
+#     EPA Greenhouse Gas Equivalencies Calculator, citing the joint EPA/DOT
+#     Federal Register rulemaking (May 7, 2010) on fuel economy standards.
+#     https://www.epa.gov/energy/greenhouse-gas-equivalencies-calculator-calculations-and-references
+# ══════════════════════════════════════════════════════════════════════════════
+
+TRANSIT_BUS_IDLE_GAL_PER_HR = 1.0    # DOE Fact #861 / Argonne National Laboratory
+DIESEL_CO2_KG_PER_GALLON    = 10.18  # EPA GHG Equivalencies Calculator (Federal Register 2010)
+
+EMISSIONS_METHODOLOGY_NOTE = (
+    "Estimate only, not a precision vehicle emissions model. Treats the time "
+    "difference per mile between before/after average speed as a proxy for "
+    "reduced idling/low-speed time, then applies DOE's transit bus idling fuel "
+    "rate (~1.0 gal/hr, Fact #861, Argonne National Laboratory) and EPA's "
+    "diesel CO2 factor (10.18 kg/gal, Federal Register 2010). Treat as "
+    "directional, order-of-magnitude - not an exact figure."
+)
+
+
+def estimate_emissions_impact(result, daily_bus_trips=None, route_miles=None):
+    """
+    Estimate CO2 impact from a route's before/after speed change.
+    Returns None if the result has no speed data to work with.
+
+    daily_bus_trips & route_miles are OPTIONAL, user-supplied numbers for
+    scaling the per-mile rate up to a daily/annual total. If either is left
+    out, only the per-mile rate is returned - no trip volume is assumed or
+    invented.
+    """
+    speed_before = result.get("speed_before")
+    speed_after = result.get("speed_after")
+    if not speed_before or not speed_after:
+        return None
+
+    min_per_mile_before = 60.0 / speed_before
+    min_per_mile_after  = 60.0 / speed_after
+    time_saved_min_per_mile = min_per_mile_before - min_per_mile_after
+    time_saved_hr_per_mile  = time_saved_min_per_mile / 60.0
+
+    fuel_saved_gal_per_mile = time_saved_hr_per_mile * TRANSIT_BUS_IDLE_GAL_PER_HR
+    co2_avoided_kg_per_mile = fuel_saved_gal_per_mile * DIESEL_CO2_KG_PER_GALLON
+
+    out = {
+        "time_saved_min_per_mile": round(time_saved_min_per_mile, 2),
+        "fuel_saved_gal_per_mile": round(fuel_saved_gal_per_mile, 4),
+        "co2_avoided_kg_per_mile": round(co2_avoided_kg_per_mile, 3),
+        "methodology": EMISSIONS_METHODOLOGY_NOTE,
+    }
+
+    if daily_bus_trips and route_miles:
+        daily_miles = daily_bus_trips * route_miles
+        out["co2_avoided_kg_per_day"]  = round(co2_avoided_kg_per_mile * daily_miles, 1)
+        out["co2_avoided_kg_per_year"] = round(out["co2_avoided_kg_per_day"] * 365, 0)
+        out["scale_assumption"] = f"{daily_bus_trips} daily trips x {route_miles} route miles (user-supplied, not pulled from data)"
+
+    return out
+
+
+def write_impact_summary(result, client, brand_name="MTA", emissions=None):
+    """LLM-written before/after impact statement in the style of an MTA press release.
+    emissions: optional dict from estimate_emissions_impact() - if provided, the
+    summary may reference it, but is instructed to label it as an estimate."""
+    emissions_block = ""
+    if emissions:
+        emissions_block = f"""
+- Estimated CO2 avoided: {emissions['co2_avoided_kg_per_mile']} kg per bus-mile
+  (THIS IS AN ESTIMATE based on EPA/DOE published rates, not a precise measurement -
+  if you mention it, explicitly call it an estimate, never a precise/certified figure)
+"""
+
     prompt = f"""Write a short before/after impact statement for {brand_name}'s Automated Camera
 Enforcement (ACE) program on route {result['route']}, suitable for inclusion in a press release
 or board report. Use ONLY the data below - do not invent numbers.
@@ -193,7 +277,7 @@ DATA:
 - p-value: {result.get('p_value')}
 - Violations in first {90} days after activation: {result.get('violations_first_window')}
 - Violations in most recent {90}-day window: {result.get('violations_recent_window')}
-
+{emissions_block}
 Write 2-3 short sentences, plain English, matching the tone of an MTA press release
 (e.g. "Bus routes equipped with automated enforcement on average have increased speeds by 5%").
 If the verdict is NO SIGNIFICANT CHANGE, DIRECTIONAL ONLY, or CONFIRMED DECLINE, do not overstate
@@ -202,6 +286,6 @@ the result - be honest that the data doesn't support a strong improvement claim 
     r = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3, max_tokens=200,
+        temperature=0.3, max_tokens=220,
     )
     return r.choices[0].message.content.strip()
