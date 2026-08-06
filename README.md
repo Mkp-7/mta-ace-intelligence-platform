@@ -4,21 +4,27 @@
 
 ## Overview
 
-A 4-module analytics platform that ingests real rider review data from the MTA app and delivers continuous, automated insights for Transit Operations leaders. What traditionally takes an analyst 3 days to produce manually - theme analysis, anomaly detection, executive summaries - this platform produces in under 30 seconds.
+A 6-module analytics platform that ingests real rider review data from the MTA app and delivers continuous, automated insights for Transit Operations leaders. What traditionally takes an analyst 3 days to produce manually - theme analysis, anomaly detection, executive summaries - this platform produces in under 30 seconds.
 
 ## What It Does
 
-**Voice of Customer AI**
+**🏠 Home**
+Executive dashboard with live KPIs summarizing platform activity across all modules - a single pane of glass for operations leadership.
+
+**🗣️ Voice of Customer AI**
 Reads thousands of rider reviews and automatically identifies recurring themes (real-time tracking accuracy, service alerts, trip planning, etc.), flags sudden rating drops, and generates polished executive summaries ready for leadership - no manual effort required.
 
-**Service Pulse**
+**📊 Service Pulse**
 Tracks how rider sentiment evolves over time, pinpointing exactly which app release caused a rating shift. Gives operations leaders a clear before/after view of every change.
 
-**Test & Learn Autopilot**
-Uploads pilot vs control data and instantly computes statistical significance, effect size, and a clear verdict - scale it, kill it, or keep watching. Eliminates the need to wait for monthly manual reads.
+**🧪 Test & Learn Autopilot**
+Upload pilot vs control data and instantly compute statistical significance, effect size, and a clear verdict - scale it, kill it, or keep watching. Eliminates the need to wait for monthly manual reads.
 
-**Analyst Copilot**
+**🤖 Analyst Copilot**
 A plain-English chat interface where any leader can ask questions about rider sentiment and get answers backed by real data - without routing requests through the analytics team.
+
+**📋 ACE Impact Certification**
+Pulls real public route speed and violation data to statistically certify the before/after impact of each ACE route - the analysis MTA currently writes by hand per press release, now automated.
 
 ## Built With
 
@@ -31,3 +37,4 @@ Reviews are pulled automatically from the Apple App Store listing for **The Offi
 ---
 
 *Configured for the MTA. The platform is designed to work across any brand or agency by editing `config.py`.*
+
