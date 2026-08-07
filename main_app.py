@@ -130,7 +130,6 @@ PAGES = {
     "map":     "📊  Service Pulse",
     "test":    "🧪  Test & Learn Autopilot",
     "copilot": "🤖  Analyst Copilot",
-    "impact":  "📋  ACE Impact Certification",
 }
 PAGE_OPTIONS = list(PAGES.values())
 
@@ -290,10 +289,7 @@ if cur_page == "home":
          "STATISTICS", "#8b5cf6", "test"),
         ("🤖", "Analyst Copilot",
          "Plain-English chat. Ask 'Which app version caused the most service-status complaints?' and get a real answer with numbers - no SQL needed.",
-         "AI CHAT", "#f59e0b", "copilot"),
-        ("📋", "ACE Impact Certification",
-         "Pulls real public route speed and violation data, statistically certifies the before/after impact of each ACE route - the analysis MTA currently writes by hand per press release.",
-         "REAL DATA", "#ec4899", "impact"),
+         "AI CHAT", "#f59e0b", "copilot")
     ]
 
     col1, col2 = st.columns(2)
@@ -325,8 +321,4 @@ elif cur_page == "test":
 
 elif cur_page == "copilot":
     from module4_analyst_copilot.app import show
-    show()
-
-elif cur_page == "impact":
-    from module5_ace_impact.app import show
     show()
