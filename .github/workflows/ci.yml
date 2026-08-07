@@ -30,9 +30,6 @@ jobs:
           'module2_store_pulse_map/app.py',
           'module3_test_and_learn/app.py',
           'module4_analyst_copilot/app.py',
-          'module5_ace_impact/01_extract_ace_data.py',
-          'module5_ace_impact/impact_engine.py',
-          'module5_ace_impact/app.py',
         ]
         missing = [f for f in files if not os.path.exists(f)]
         assert not missing, f'Missing: {missing}'
