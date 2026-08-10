@@ -23,9 +23,6 @@ Upload pilot vs control data and instantly compute statistical significance, eff
 **🤖 Analyst Copilot**
 A plain-English chat interface where any leader can ask questions about rider sentiment and get answers backed by real data - without routing requests through the analytics team.
 
-**📋 ACE Impact Certification**
-Pulls real public route speed and violation data to statistically certify the before/after impact of each ACE route - the analysis MTA currently writes by hand per press release, now automated.
-
 ## Built With
 
 Python · Streamlit · Plotly · Groq LLM · SciPy · Pandas · GitHub Actions
