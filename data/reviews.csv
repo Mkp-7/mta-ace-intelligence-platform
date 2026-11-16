@@ -1,4 +1,8 @@
 review_id,stars,date,title,text,source,product,version,vote_count
+14782390041,3,2026-11-12,iPhone Duo support,App is great but needs iPhone Duo and Liquid Glass support,app_store,MTA,4.28.0,0
+14780995586,1,2026-11-12,inaccurate,times,app_store,MTA,4.27.0,0
+14775490521,1,2026-11-10,Where’s 59th and Lex?,The train station doesn’t show up on this app at all. I can never see the train times.,app_store,MTA,4.27.0,0
+14754041165,3,2026-11-05,Location Not Accurate,The app suddenly can’t find my location. It is pulling up stations that are 2 stops away. This is causing me not to know what time the train is coming to my station.,app_store,MTA,4.27.0,0
 14744166741,4,2026-11-02,Please add widgets for nearby stations!,"I’m happy to see the widgets back for favorited stations. I’d also really like to have a widget for the “nearby” view on the app (where you can see upcoming arrivals for the closest train stops, with your favorite lines given priority and a small button to swap the uptown/downtown direction), which is perfect and would be great to have in widget form so I could quickly swipe to see from my lock screen. I’d love to have a widget for nearby train stops and another for nearby bus stops.",app_store,MTA,4.26.0,0
 14740955854,1,2026-11-02,Trip planner,It’s hot garbage! I’m,app_store,MTA,4.26.0,0
 14736320945,2,2026-10-31,The app crashed,"As I try to find out where to go and when the next train or bus comes, the app crashes over and over again. This needs to be updated.",app_store,MTA,4.26.0,0
@@ -494,7 +498,3 @@ review_id,stars,date,title,text,source,product,version,vote_count
 13518024386,5,2025-12-15,MTA,The app is very helpful when it comes to checking the map and checking when the next train or bus comes,app_store,MTA,3.24.1,0
 13506957959,2,2025-12-12,Used to work,"This app used to be great. Now the subway section no longer loads for me. It will show all the buses nearby, but no longer shows the trains. You have to search for a train or station, but some stations it won’t pull up. So incredibly frustrating. Have tried deleting and reinstalling, but no use. Completely useless the last year.",app_store,MTA,3.24.1,1
 13505321908,1,2025-12-12,Worse Than walking,Being charged $29 vs $2.90 tried to use a old metrocard and the machine took it.,app_store,MTA,3.24.1,0
-13495665986,1,2025-12-09,Was bed before…,This app was always unreliable. I thought maybe this update would correct things. It was always telling me the bus would come and then it didn’t come or that it had come and it departed while I’m standing there and there’s no bus now with this update. It won’t even load. This is probably the worst app I’ve used for any kind of transportation ever.,app_store,MTA,3.24.0,0
-13487571666,1,2025-12-07,Worst MTA App Ever,"Super Slow, Unreliable, I’d rather use a third party app compared to this one, layout may seem cool but if they can’t handle it, they shouldn’t use it. It caused major lag and slow service. Use a different mta tracker.",app_store,MTA,3.24.0,0
-13443040514,5,2025-11-26,Good,"This app is way better than the old one, I do wish you could buy metro north and LIRR tickets on it… Seems like the train time app is only here to do half the job. But its smooth and reliable.",app_store,MTA,,0
-13420985967,5,2025-11-20,Delightful,Excellent app. Obvious the team cares about riders. Delightful!,app_store,MTA,3.23.0,0
